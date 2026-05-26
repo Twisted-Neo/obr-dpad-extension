@@ -1,11 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import OBR from '@owlbear-rodeo/sdk';
 import { supabase } from '@/lib/supabase';
 import { QRCodeSVG } from 'qrcode.react'; // Simple QR renderer
-import { ShieldAlert, UserCheck, ShieldQuestion, Move } from 'lucide-react';
-import dynamic from 'next/dynamic';
+import { UserCheck, ShieldQuestion, Move } from 'lucide-react';
 
 interface Player {
   id: string;
@@ -14,64 +12,71 @@ interface Player {
   token_id: string | null;
 }
 
-function ExtensionPage() {
+export default function ExtensionPage() {
   const [ready, setReady] = useState(false);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [hostUrl, setHostUrl] = useState('');
+  const [obrSdk, setObrSdk] = useState<any>(null);
 
-  // 1. Initialize Owlbear Rodeo SDK & Create Room
+  // 1. Safe Client-Only Import & Initialization
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setHostUrl(window.location.origin);
     }
 
-    OBR.onReady(async () => {
-      setReady(true);
-      
-      // Look for a room code we generated earlier this session or make a new one
-      let code = sessionStorage.getItem('obr_dpad_room');
-      if (!code) {
-        code = Math.random().toString(36).substring(2, 6).toUpperCase();
-        sessionStorage.setItem('obr_dpad_room', code);
-      }
-      setRoomCode(code);
+    // Lazy load the SDK explicitly on the client browser 
+    import('@owlbear-rodeo/sdk').then((OBRModule) => {
+      const OBR = OBRModule.default;
+      setObrSdk(OBR);
 
-      // Register the room in Supabase
-      await supabase.from('rooms').upsert([{ id: code }]);
+      OBR.onReady(async () => {
+        setReady(true);
+        
+        // Look for a room code we generated earlier this session or make a new one
+        let code = sessionStorage.getItem('obr_dpad_room');
+        if (!code) {
+          code = Math.random().toString(36).substring(2, 6).toUpperCase();
+          sessionStorage.setItem('obr_dpad_room', code);
+        }
+        setRoomCode(code);
 
-      // Fetch existing players for this room
-      fetchPlayers(code);
+        // Register the room in Supabase
+        await supabase.from('rooms').upsert([{ id: code }]);
 
-      // Listen for players joining or pressing buttons in real-time
-      const channel = supabase
-        .channel(`room-${code}`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'players', filter: `room_id=eq.${code}` },
-          (payload) => {
-            // Refresh player list automatically when data updates
-            fetchPlayers(code);
+        // Fetch existing players for this room
+        fetchPlayers(code);
 
-            // If a player sent a movement command, handle it immediately
-            if (payload.eventType === 'UPDATE') {
-              const updatedPlayer = payload.new as Player;
-              
-              // If status includes a command, run it!
-              if (updatedPlayer.status.startsWith('MOVE_') && updatedPlayer.token_id) {
-                const direction = updatedPlayer.status.replace('MOVE_', '');
-                executeMovement(updatedPlayer.token_id, direction);
-                // Clear the command status back to approved
-                resetPlayerStatus(updatedPlayer.id);
+        // Listen for players joining or pressing buttons in real-time
+        const channel = supabase
+          .channel(`room-${code}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'players', filter: `room_id=eq.${code}` },
+            (payload) => {
+              // Refresh player list automatically when data updates
+              fetchPlayers(code);
+
+              // If a player sent a movement command, handle it immediately
+              if (payload.eventType === 'UPDATE') {
+                const updatedPlayer = payload.new as Player;
+                
+                // If status includes a command, run it!
+                if (updatedPlayer.status.startsWith('MOVE_') && updatedPlayer.token_id) {
+                  const direction = updatedPlayer.status.replace('MOVE_', '');
+                  executeMovement(OBR, updatedPlayer.token_id, direction);
+                  // Clear the command status back to approved
+                  resetPlayerStatus(updatedPlayer.id);
+                }
               }
             }
-          }
-        )
-        .subscribe();
+          )
+          .subscribe();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      });
     });
   }, []);
 
@@ -85,7 +90,7 @@ function ExtensionPage() {
   };
 
   // 2. The Token Movement Math Logic
-  const executeMovement = async (tokenId: string, direction: string) => {
+  const executeMovement = async (OBR: any, tokenId: string, direction: string) => {
     try {
       const dpi = await OBR.scene.grid.getDpi();
       const scale = await OBR.scene.grid.getScale();
@@ -93,7 +98,7 @@ function ExtensionPage() {
       // Calculate exactly how many raw screen pixels match 1 square unit
       const offset = dpi * (scale.parsed?.multiplier || 1);
 
-      await OBR.scene.items.updateItems([tokenId], (items) => {
+      await OBR.scene.items.updateItems([tokenId], (items: any[]) => {
         for (let item of items) {
           if (item.position) {
             if (direction === 'UP') item.position.y -= offset;
@@ -110,10 +115,12 @@ function ExtensionPage() {
 
   // 3. Assign currently selected map token to a waiting player
   const assignTokenToPlayer = async (playerId: string) => {
-    const selection = await OBR.player.getSelection();
+    if (!obrSdk) return;
+    
+    const selection = await obrSdk.player.getSelection();
     
     if (!selection || selection.length === 0) {
-      OBR.notification.show("Please click and select a token on the map first!");
+      obrSdk.notification.show("Please click and select a token on the map first!");
       return;
     }
 
@@ -124,11 +131,11 @@ function ExtensionPage() {
       .update({ token_id: selectedTokenId, status: 'approved' })
       .eq('id', playerId);
 
-    OBR.notification.show("Token assigned successfully!");
+    obrSdk.notification.show("Token assigned successfully!");
   };
 
   if (!ready || !roomCode) {
-    return <div className="p-4 text-sm text-gray-400 animate-pulse">Connecting to Owlbear Rodeo...</div>;
+    return <div className="p-4 text-sm text-gray-400 animate-pulse bg-slate-900 min-h-screen">Connecting to Owlbear Rodeo...</div>;
   }
 
   const joinUrl = `${hostUrl}/join?room=${roomCode}`;
@@ -152,7 +159,7 @@ function ExtensionPage() {
           <QRCodeSVG value={joinUrl} size={140} />
         </div>
         <p className="text-xs text-slate-500 mt-1 max-w-[200px]">
-          Have players scan this QR code or visit your Vercel deployment deployment url.
+          Have players scan this QR code or visit your Vercel deployment URL.
         </p>
       </section>
 
@@ -206,11 +213,3 @@ function ExtensionPage() {
     </div>
   );
 }
-
-// Disable SSR (Server-Side Rendering) cleanly for this component to satisfy Vercel compilation
-const ExtensionPageClientOnly = dynamic(
-  () => Promise.resolve(ExtensionPage),
-  { ssr: false }
-);
-
-export default ExtensionPageClientOnly;
