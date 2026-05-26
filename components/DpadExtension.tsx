@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import OBR from '@owlbear-rodeo/sdk';
 import { supabase } from '@/lib/supabase';
-import { QRCodeSVG } from 'qrcode.react';
+import { QRCodeSVG } from 'qrcode.react'; 
 import { UserCheck, ShieldQuestion, Move } from 'lucide-react';
 
 interface Player {
@@ -110,7 +110,7 @@ export default function DpadExtension() {
   };
 
   if (!ready || !roomCode) {
-    return <div className="p-4 text-sm text-gray-400 animate-pulse">Connecting to Owlbear Rodeo...</div>;
+    return <div className="p-4 text-sm text-gray-400 animate-pulse bg-slate-900 min-h-screen">Connecting to Owlbear Rodeo...</div>;
   }
 
   const joinUrl = `${hostUrl}/join?room=${roomCode}`;
