@@ -5,6 +5,7 @@ import OBR from '@owlbear-rodeo/sdk';
 import { supabase } from '@/lib/supabase';
 import { QRCodeSVG } from 'qrcode.react'; // Simple QR renderer
 import { ShieldAlert, UserCheck, ShieldQuestion, Move } from 'lucide-react';
+import dynamic from 'next/dynamic';
 
 interface Player {
   id: string;
@@ -13,7 +14,7 @@ interface Player {
   token_id: string | null;
 }
 
-export default function ExtensionPage() {
+function ExtensionPage() {
   const [ready, setReady] = useState(false);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -55,10 +56,8 @@ export default function ExtensionPage() {
             // If a player sent a movement command, handle it immediately
             if (payload.eventType === 'UPDATE') {
               const updatedPlayer = payload.new as Player;
-              const oldPlayer = payload.old as Player;
               
-              // We will catch movement signals via a status change trick or payload trick
-              // For simplicity, if status includes a command, run it!
+              // If status includes a command, run it!
               if (updatedPlayer.status.startsWith('MOVE_') && updatedPlayer.token_id) {
                 const direction = updatedPlayer.status.replace('MOVE_', '');
                 executeMovement(updatedPlayer.token_id, direction);
@@ -207,3 +206,11 @@ export default function ExtensionPage() {
     </div>
   );
 }
+
+// Disable SSR (Server-Side Rendering) cleanly for this component to satisfy Vercel compilation
+const ExtensionPageClientOnly = dynamic(
+  () => Promise.resolve(ExtensionPage),
+  { ssr: false }
+);
+
+export default ExtensionPageClientOnly;
